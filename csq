@@ -1,0 +1,319 @@
+#!/bin/sh
+
+# Herramienta de configuracion de SquidGuard
+
+# Config vars
+BL_dir=/var/squidGuard/blacklists
+BL_enabled_file=/var/squidGuard/enabled_blacklists
+SQG=/usr/bin/squidGuard
+SQG_conf=/etc/squid/squidGuard.conf
+CBL_file=/var/squidGuard/blacklists/custom_blacklist/domains
+CWL_file=/var/squidGuard/blacklists/custom_whitelist/domains
+DNS_file=/etc/dnsmasq.d/blacklist.conf
+
+
+#************** Configuraciones Comunes ***************
+
+
+function SaveSG {
+	# Clean config file
+	echo '# Archivo autogenerado por config-sg' > $SQG_conf
+	echo ' ' >> $SQG_conf
+
+    # Head
+    echo "dbhome /var/squidGuard/blacklists" >> $SQG_conf
+    echo "logdir /var/log/squidGuard" >> $SQG_conf
+    echo " " >> $SQG_conf
+
+    # Blacklists
+    GetEnabledLists
+    
+    # Declare Default ACL
+    for BL in custom_whitelist custom_blacklist adultos
+    do
+        if [ -e $BL_dir/$BL/domains ] || [ -e $BL_dir/$BL/urls ] ;then
+            echo "dest $BL{" >> $SQG_conf
+            echo "    log        $BL" >> $SQG_conf
+            [ -e $BL_dir/$BL/domains ] && echo "    domainlist    $BL/domains" >> $SQG_conf
+            [ -e $BL_dir/$BL/urls ] && echo "    urllist        $BL/urls" >> $SQG_conf
+            echo "}" >> $SQG_conf
+            echo " " >> $SQG_conf
+        fi
+    done
+
+    # ACL por defecto
+    # permitir custom_whitelist
+    # bloquear custom_blacklist adult
+    
+    ACL='custom_whitelist !custom_blacklist !adultos'
+
+	for BL in $BL_enabled
+	do 
+		[ -e $BL_dir/$BL/domains ] || [ -e $BL_dir/$BL/urls ] || continue
+		echo "dest $BL{" >> $SQG_conf
+		echo "    log        $BL" >> $SQG_conf
+		[ -e $BL_dir/$BL/domains ] && echo "    domainlist    $BL/domains" >> $SQG_conf
+		[ -e $BL_dir/$BL/urls ] && echo "    urllist        $BL/urls" >> $SQG_conf
+		echo "}" >> $SQG_conf
+		echo " " >> $SQG_conf
+		ACL="$ACL !$BL"
+	done
+
+    # Defaults ACL config
+    echo "acl {" >> $SQG_conf
+    echo "    default {" >> $SQG_conf
+    echo "        pass $ACL all" >> $SQG_conf
+    echo "        redirect     302:http://schoolserver.localdomain/cgi-bin/squidGuard.cgi?clientaddr=%a&clientname=%n&clientident=%i&srcclass=%s&targetgroup=%t&url=%u" >> $SQG_conf
+    echo "    }" >> $SQG_conf
+    echo "}" >> $SQG_conf
+
+}
+
+
+
+
+
+
+
+
+#---------------- Configuracion de Listas --------------------
+
+function GetAvailableLists {
+    # Obtiene una cadena con las listas disponibles
+    # Return: BL_available
+
+	BL_available=''
+    IFS='
+    '
+    for dir in $(ls $BL_dir)
+    do
+    if [ "$dir" = "adultos" ] || [ "$dir" = "custom_blacklist" ] || [ "$dir" = "custom_whitelist" ] ;then
+        continue;
+    fi
+	BL_available="$BL_available$dir "
+    done
+    IFS=' '
+}
+
+function PrintAvailable {
+    GetAvailableLists
+    echo "$BL_available"
+}
+
+function PrintEnabled {
+    GetEnabledLists
+    echo "$BL_enabled"
+}
+
+function GetEnabledLists {
+    # Obtiene una cadena con las listas habilitadas
+    # Return: BL_enabled
+
+    BL_enabled=''
+    GetAvailableLists
+    if [ -e $BL_enabled_file ]
+    then
+        for BL in $BL_available
+        do
+            if $( grep -q "$BL" $BL_enabled_file)
+            then
+                BL_enabled="$BL_enabled$BL "
+            fi
+        done
+    fi
+}
+
+function EnableList {
+    # Habilita una lista
+    # Param1: List
+    # Return: None
+ 
+    if ! $( grep -q "$1" $BL_enabled_file )
+    then
+        echo "$1" >> $BL_enabled_file
+    fi
+}
+
+function DisableList {
+    # Deshabilita una lista
+    # Param1: List
+    # Return: None
+
+    if $( grep -q "$1" $BL_enabled_file )
+    then
+        sed -i -e "/^$1$/d" $BL_enabled_file
+    fi
+}
+
+#============= Configuracion de Dominios =============
+
+function AddDomain {
+    # Agrega un dominio
+    # Param1: String
+    # Param2: black or white
+    
+    if [ $2 = 'black' ]; then
+        AddStringToFile $1 $CBL_file
+        AddStringToFile "address=/$1/172.18.96.1" $DNS_file
+    elif [ $2 = 'white' ]; then
+        AddStringToFile $1 $CWL_file
+    else
+        echo 'Error al ingresar el parametro de tipo de lista black o white'
+    fi
+}
+
+function DelDomain {
+    # Eliminar un dominio
+    # Param1: String
+    # Param2: black or white
+    
+    if [ $2 = 'black' ]; then
+        DelStringFromFile $1 $CBL_file
+        DelStringFromFile "address=/$1/172.18.96.1" $DNS_file
+    elif [ $2 = 'white' ]; then
+        DelStringFromFile $1 $CWL_file
+    else
+        echo 'Error al ingresar el parametro de tipo de lista black o white'
+    fi
+}
+
+function DelStringFromFile {
+    # Elimina una cadena de un archivo
+    # Param1: String
+    # Param2: File
+    # Return: Nothing
+
+    TestFile $2
+    sed -i -e "\:^$1:d" $2
+}
+
+function AddStringToFile {
+    # Agrega una cadena a un archivo si la cadena no es vacia
+    # Param1: String
+    # Param2: File
+    # Return: Nothing
+
+    TestFile $2
+
+    # Clean spaces
+    Str=$(echo "$1" | sed -e 's/ //' )
+
+    [ "$Str" = '' ] || echo "$Str" >> $2
+}
+
+function FileToStr {
+    # Convierte un archivo en una cadena
+    # Param1: File
+    # Return: String
+    
+    TestFile $1
+    Str=''
+    while read line
+        do Str="$Str$line "
+    done < $1
+    echo "$Str"
+}
+
+function TestFile {
+    # Verifica si un archivo existe. Si no existe termina el programa.
+    # Param1: File
+    # Return: String
+
+    if [ "$1" = "$DNS_file" ];then
+        touch $1
+    elif ! [ -e $1 ]; then
+        echo "No se encontro el archivo $1"      
+        exit 0
+    fi
+}
+
+function Commit {
+    # Guardar configuracion squidGuard.conf
+    SaveSG
+
+    # Crear base de datos de dominios
+    $SQG -C $CBL_file -c $SQG_conf
+    $SQG -C $CWL_file -c $SQG_conf
+
+    # Reiniciar squidGuard
+    chown -R 23.23 /var/log/squidGuard
+    /sbin/service squid reload
+    /sbin/service dnsmasq restart
+}
+
+function PrintResumen {
+    GetAvailableLists
+    GetEnabledLists
+
+    echo " "
+    echo "Listas Disponibles" 
+    echo "----------------------------------------------"
+    for a in $BL_available;do
+        echo $a
+    done
+
+    echo " "
+    echo "Listas Habilitadas"
+    echo "----------------------------------------------"
+    for a in $BL_enabled;do
+        echo $a
+    done
+
+    echo " "
+    echo "Dominios Bloqueados"
+    echo "----------------------------------------------"
+    cat $CBL_file
+
+    echo " "
+    echo "Dominios Permitidos"
+    echo "----------------------------------------------"
+    cat $CWL_file
+}
+function PrintOptions {
+    echo " "
+    echo " Herramienta de configuracion de SquidGuard y Dominios"
+    echo "================================================================"
+    echo " Opciones Comunes ----------------------------------------------"
+    echo "   -c        : Ejecutar cambios"
+    echo "   -r        : Presentar un resumen el estado"
+    echo "   -h        : Presentar esta ayuda"
+    echo " "
+    echo " Opciones de Listas --------------------------------------------"
+    echo "   -e list   : Habilitar una lista"
+    echo "   -d list   : Deshabilitar una lista"
+    echo "   -pe       : Presentar las listas habilitadas"
+    echo "   -pa       : Presentar las listas disponibles"
+    echo " "
+    echo " Opciones de Dominios -------------------------------------------"
+    echo "   -ab list  : Agregar un dominio a la lista de sitios bloqueados"
+    echo "   -db list  : Borrar un dominio a la lista de sitios bloqueados"
+    echo "   -aw list  : Agregar un dominio a la lista de sitios permitidos"
+    echo "   -dw list  : Borrar un dominio a la lista de sitios permitidos"
+    echo "   -pb       : Presentar la lista de sitios bloqueados"
+    echo "   -pw       : Presentar la lista de sitios permitidos"
+}
+
+# Parse Options
+while [ ! -z "$1" ]
+do
+  case "$1" in
+    -c) Commit;;
+# Configuracion de Listas
+    -e) EnableList $2;;
+    -d) DisableList $2;;
+    -pe) PrintEnabled;;
+    -pa) PrintAvailable;;
+# Configuracion de Dominios
+    -ab) AddDomain $2 black;;
+    -db) DelDomain $2 black;;
+    -aw) AddDomain $2 white;;
+    -dw) DelDomain $2 white;;
+    -pb) FileToStr $CBL_file;;
+    -pw) FileToStr $CWL_file;;
+    -h) PrintOptions;;
+    -r) PrintResumen;;
+     *) break;;
+  esac
+
+  shift
+done
