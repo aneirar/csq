@@ -1,0 +1,218 @@
+#!/bin/bash -x
+
+# Config vars
+cmd=/usr/bin/csq
+
+# Internal vars
+MenuWidth=640
+MenuHeight=480
+
+#@@@@@@@@@@@@@@@@@@@@@ Menu Principal @@@@@@@@@@@@@@@@@@@@@@@@@@
+function MainMenu {
+R=$(zenity --title "Configuración del Filtro de Contenidos" \
+	--width $MenuWidth --height $MenuHeight \
+	--text "Elige una opción:" \
+	--list --column "Número" --column  "Opción" \
+	1 "Activar o Desactivar Listas de Dominios Bloqueados" \
+	2 "Agregar o Quitar Dominios Bloqueados" 	\
+	3 "Agregar o Quitar Dominios Permitidos" )
+    
+    if [ "$R" = '1' ];then
+            BLMenu
+
+    elif [ "$R" = '2' ];then
+        while true;
+        do
+            CBLMenu
+            [ "$R" = '' ] && break
+        done
+    elif [ "$R" = '3' ];then
+        while true;
+        do
+            CWLMenu
+            [ "$R" = '' ] && break
+        done
+    else
+        echo "Salir"
+    fi
+}
+# ===============  Menu - Listas Prestablecidas ================
+function BLMenu {
+    BL_str=''
+    AllLists=''
+    EnabledLists=''
+
+    AllLists=$($cmd -pa)
+    EnabledLists=$($cmd -pe)
+
+    for list in $AllLists
+    do  
+        if $(echo $EnabledLists | grep -q $list) ;then
+        BL_str="$BL_str TRUE $list"        
+        else
+        BL_str="$BL_str FALSE $list"
+        fi
+    done 
+    
+	R=$(zenity --title "Configuración de Listas Bloqueadas" \
+		--text "Seleccione las listas que desea bloquear." \
+		--width $MenuWidth --height $MenuHeight --separator=' '\
+		--checklist --list --column  "Bloquear" --column "Lista" \
+		$BL_str)
+
+    if [ "$R" = '' ];then
+        echo "Se Cancela la Operacion o no se han seleccionado ninguna"
+    else
+
+        for list in $AllLists
+        do
+            $cmd -d $list
+        done
+
+        for list in $R
+        do
+            $cmd -e $list
+        done
+
+        # Ejecutar configuracion
+        $cmd -c && Exito
+    fi
+}
+
+
+# ====================  Menu - Dominios Bloqueados  ========================
+function CBLMenu {
+
+	R=$(zenity --title "Dominios Bloqueados" \
+	    --width $MenuWidth --height $MenuHeight \
+	    --text "Elige una opción:" \
+	    --list --column "Número" --column  "Opción" \
+	    1 "Agregar un Dominio" \
+	    2 "Ver o Quitar un Dominio")
+    if [ "$R" = '1' ] ;then
+        AddCBL
+    elif [ "$R" = '2' ] ;then
+        DelCBL
+    else
+        echo 'Operacion Cancelada'
+    fi
+        
+}
+
+
+# ------------------ Agregar un Dominio Bloqueado --------------------
+function AddCBL {
+    R=$(zenity --title "Agregar Dominios Bloqueados" \
+	    --width $MenuWidth --height $MenuHeight \
+	    --text "Ingrese el nombre del dominio que desea bloquear.\nLos nombres de dominio sólo abarcan una parte de una dirección URL.\nSin embargo, al bloquear un dominio se bloquea todo el grupo de páginas que pertenecen a un sitio web.\nPor ejemplo, para bloquear todas las páginas de Facebook deberá usar:" \
+        --entry \
+	    --entry-text "facebook.com")
+    if ! [ "$R" = '' ]
+    then
+        $cmd -ab "$R"
+    fi
+
+    # Ejecutar configuracion
+    $cmd -c && Exito
+}
+
+
+# ------------------ Eliminar un Dominio Bloqueado----------------------
+function DelCBL {
+    Domains=$($cmd -pb)
+    str=''
+    
+    for d in $Domains;do
+        str="$str FALSE $d"
+    done
+
+    R=$(zenity --title "Dominios Bloqueado" \
+        --width $MenuWidth --height $MenuHeight \
+        --text "Seleccione el dominio que desea quitar:" \
+        --list --separator=' ' --checklist --column 'Quitar' --column 'Dominio' $str)
+    if ! [ "$R" = '' ]
+    then
+        for domain in $R;do
+           $cmd -db "$domain"
+        done
+    fi
+
+    # Ejecutar configuracion
+    $cmd -c && Exito
+}
+
+
+
+
+
+#==================     Menu - Dominios Permitidos  ================
+function CWLMenu {
+
+	R=$(zenity --title "Dominios Permitidos" \
+	    --width $MenuWidth --height $MenuHeight \
+	    --text "Elige una opción:" \
+	    --list --column "Número" --column  "Opción" \
+	    1 "Agregar un dominio" \
+	    2 "Ver o Quitar un dominio")
+    if [ "$R" = '1' ] ;then
+        AddCWL
+    elif [ "$R" = '2' ] ;then
+        DelCWL
+    else
+        echo 'Operacion Cancelada'
+    fi
+        
+}
+
+# ------------------ Agregar un Dominio Permitidos --------------------
+function AddCWL {
+    R=$(zenity --title "Agregar un Dominio Permitido" \
+	    --width $MenuWidth --height $MenuHeight \
+	    --text "Ingrese el nombre del dominio que desea permitir." \
+        --entry \
+	    --entry-text "")
+
+    if ! [ "$R" = '' ]
+    then
+        $cmd -aw "$R"
+    fi
+
+    # Ejecutar configuracion
+    $cmd -c && Exito
+}
+
+
+# ------------------ Eliminar un Dominio Permitido----------------------
+function DelCWL {
+    Domains=$($cmd -pw)
+    str=''
+    
+    for d in $Domains;do
+        str="$str FALSE $d"
+    done
+
+    R=$(zenity --title "Quitar un Dominio Permitido" \
+        --width $MenuWidth --height $MenuHeight \
+        --text "Seleccione el dominio que desea quitar:" \
+        --list --checklist --separator=' ' --column "Quitar" --column "Dominio" $str )
+
+    if ! [ "$R" = '' ]
+    then
+        for domain in $R;do
+             $cmd -dw "$domain"
+        done
+    fi
+
+    # Ejecutar configuracion
+    $cmd -c && Exito
+}
+
+function Exito {
+    zenity --title "Listo" --info --text="Configuración realizada con éxito"
+}
+
+function Fallo {
+    zenity --title "Falló" --info --text="Hubo un error al realizar la configuración"
+}
+
+MainMenu
